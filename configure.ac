@@ -2,6 +2,7 @@ AC_PREREQ([2.64])
 
 AC_INIT([sneakyutils],[0.0.1],[andrew@du.nham.ca])
 AC_CONFIG_AUX_DIR([build-aux])
+AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIRS([m4])
 
 echo

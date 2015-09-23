@@ -13,6 +13,8 @@
 #include <string.h>  /* for strcmp */
 #include <unistd.h>  /* for execve */
 
+#include "config.h"
+
 
 static void
 die(const char * format, ...)

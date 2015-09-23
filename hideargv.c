@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "config.h"
+
 
 static void my_constructor(void) __attribute__((constructor));
 
