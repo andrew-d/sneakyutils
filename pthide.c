@@ -15,6 +15,11 @@
 
 #include <gelf.h>
 
+#include "config.h"
+
+
+#define UNUSED(_x)  ((void)(_x))
+
 
 /* TODO: these should be set in the configure script */
 #define PRINT_SYSCALLS 0
@@ -142,6 +147,9 @@ start_trace(pid_t child, char* procname)
 
     /* No need to detach here - we've exited */
 #else
+    UNUSED(retval);
+    UNUSED(syscall);
+
     /* We need to continue the process, since it will have stopped upon exit of
      * a syscall (from above).  */
     if (ptrace(PTRACE_CONT, child, NULL, NULL) == -1) {

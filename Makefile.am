@@ -16,4 +16,5 @@ hello_LDFLAGS =
 
 pthide_SOURCES = pthide.c
 pthide_CFLAGS = -Wall -Wextra -pedantic
+pthide_CPPFLAGS = $(HOST_DEFINES)
 pthide_LDFLAGS = -lelf

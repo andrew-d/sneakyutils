@@ -24,6 +24,27 @@ LT_INIT([])
 
 
 ###############################################################################
+# Parse host triplet
+###############################################################################
+
+HOST_DEFINES=""
+
+case $host in
+  *-*-linux-*)  HOST_DEFINES="$HOST_DEFINES -DLINUX" ;;
+  *-*-darwin-*) HOST_DEFINES="$HOST_DEFINES -DDARWIN" ;;
+  *)            AC_MSG_ERROR([Unsupported platform]) ;;
+esac
+
+case $host in
+  x86_64-*-*)   HOST_DEFINES="$HOST_DEFINES -DAMD64" ;;
+  i?86-*-*)     HOST_DEFINES="$HOST_DEFINES -DX86" ;;
+  arm*-*-*)     HOST_DEFINES="$HOST_DEFINES -DARM" ;;
+  *)            AC_MSG_ERROR([Unsupported architecture]) ;;
+esac
+
+AC_SUBST([HOST_DEFINES])
+
+###############################################################################
 # Create the makefiles and config.h
 ###############################################################################
 
@@ -35,4 +56,6 @@ AC_CONFIG_FILES([
 ])
 
 # Write output
+echo ""
+echo "Writing output:"
 AC_OUTPUT
