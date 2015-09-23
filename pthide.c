@@ -15,6 +15,7 @@
 
 #include <gelf.h>
 
+#include "pmap.h"
 #include "config.h"
 
 
@@ -40,7 +41,7 @@
 static int start_child(int argc, char **argv);
 static int start_trace(pid_t child, char* progname);
 static int wait_for_syscall(pid_t child);
-static int parse_pmap(pid_t pid, char* findme, uintptr_t* addr);
+static int find_start_addr(pid_t pid, char *mapname, uintptr_t *addr);
 static int get_entrypoint(const char* filepath, uintptr_t *entrypoint);
 
 
@@ -130,7 +131,7 @@ start_trace(pid_t child, char* procname)
     if (wait_for_syscall(child) != 0) return 0;
 
     /* Parse the /proc/<PID>/maps file for this process. */
-    if ((status = parse_pmap(child, procname, &start_addr)) != 0) {
+    if ((status = find_start_addr(child, procname, &start_addr)) != 0) {
         fprintf(stderr, "could not parse pmap\n");
         return status;
     }
@@ -247,55 +248,49 @@ wait_for_syscall(pid_t child)
 }
 
 
+struct find_start_addr_ctx {
+    char*      mapname;
+    uintptr_t* output;
+};
+
+static int
+find_start_addr_cb(struct pmap_information *info, void *context)
+{
+    struct find_start_addr_ctx* ctx = (struct find_start_addr_ctx*)context;
+
+    /* If this matches our input, then we found it. */
+    if (strcmp(info->name, ctx->mapname) == 0) {
+        *ctx->output = info->begin;
+        return 2;
+    }
+
+    return 0;
+}
+
 /**
  * Parses /proc/<PID>/maps and returns the start address of the given mapname.
  * Returns non-zero on failure.
  */
 static int
-parse_pmap(pid_t pid, char* findme, uintptr_t* addr)
+find_start_addr(pid_t pid, char *mapname, uintptr_t *addr)
 {
-    char fname[PATH_MAX];
-    FILE* f;
+    int ret;
+    struct find_start_addr_ctx ctx;
 
-    /* Open the process's map. */
-    sprintf(fname, "/proc/%ld/maps", (long)pid);
-    f = fopen(fname, "r");
-    if (!f) {
-        fprintf(stderr, "could not open %s: %s", fname, strerror(errno));
-        return 1;
+    assert(addr != NULL);
+
+    ctx.mapname = mapname;
+    ctx.output = addr;
+
+    ret = pmap_walk(pid, find_start_addr_cb, (void*)&ctx);
+    if (ret == 2) {
+        /* Success */
+        return 0;
+    } else if (ret < 0) {
+        /* Error failure */
+        /* TODO: print error? */
     }
 
-    /* Parse each line. */
-    while (!feof(f)) {
-        char buf[PATH_MAX + 100], perm[5], dev[6], mapname[PATH_MAX];
-        unsigned long begin, end, inode, foo;
-
-        /* Read a line from the file. */
-        if (fgets(buf, sizeof(buf), f) == 0) {
-            break;
-        }
-
-        /* Parse the line */
-        mapname[0] = '\0';
-        sscanf(buf, "%lx-%lx %4s %lx %5s %lu %s", &begin, &end, perm,
-            &foo, dev, &inode, mapname);
-
-        /* If this matches our input, then we found it. */
-        if (strcmp(mapname, findme) == 0) {
-            *addr = (uintptr_t)begin;
-            fclose(f);
-            return 0;
-        }
-
-#if 1
-        /* Print information. */
-        if (strlen(mapname) > 0) {
-            printf("%s (%lx - %lx)\n", mapname, begin, end);
-        }
-#endif
-    }
-
-    fclose(f);
     return 1;
 }
 
