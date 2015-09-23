@@ -51,8 +51,14 @@ AC_SUBST([HOST_DEFINES])
 # Add default AM_CFLAGS.
 AC_SUBST([AM_CFLAGS])
 
+# Specify makefiles
 AC_CONFIG_FILES([
     Makefile
+])
+
+# Subprojects
+AC_CONFIG_SUBDIRS([
+    libelf-0.8.13
 ])
 
 # Write output
