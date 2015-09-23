@@ -21,6 +21,16 @@
 #define UNUSED(_x)  ((void)(_x))
 
 
+#if defined(AMD64) || defined(X86)
+    #define BREAKPOINT "\xCC"
+#elif defined(ARM)
+    /* TODO: is this accurate? */
+    #define BREAKPOINT "\xFE\xDE\xFF\xE7"
+#else
+    #error "Unknown architecture"
+#endif
+
+
 /* TODO: these should be set in the configure script */
 #define PRINT_SYSCALLS 0
 #define SYSCALL_NUMBER_REGISTER   ORIG_RAX
@@ -126,6 +136,38 @@ start_trace(pid_t child, char* procname)
     }
 
     printf("program segment starts at: %lx\n", start_addr);
+
+    /* TODO:
+     *   1. Depending on our architecture, we should overwrite the entrypoint
+     *      of the program with a breakpoint.
+     *   2. Run the program until we hit the breakpoint.
+     *   3. Once we have, we can use PTRACE_{PEEK,POKE}DATA to copy memory.
+     *      We should copy the memory from the top of the stack to the current
+     *      stack pointer "down" the stack (stacks grow down):
+     *
+     *          +----------+         <- top
+     *          |   stuff  |
+     *          |    ...   |
+     *          |  argv[0] |
+     *          |   argc   |         <- original stack pointer
+     *          +----------+
+     *          |  stuff*  |
+     *          |    ...   |
+     *          | argv[0]* |
+     *          |   argc*  |         <- new stack pointer
+     *          +----------+
+     *
+     *   4. Use PTRACE_POKEDATA to overwrite the original argv on the stack.
+     *   5. Unset the breakpoint.
+     *   6. We use PTRACE_{GET,SET}REGS to update the stack pointer and reset
+     *      the instruction pointer back to the beginning of our overwritten
+     *      entrypoint.
+     *   7. Detach and continue the (now modified) process.
+     *
+     * Useful links:
+     *  - http://www.linuxjournal.com/article/6210
+     *  - http://mainisusuallyafunction.blogspot.com/2011/01/implementing-breakpoints-on-x86-linux.html
+     */
 
 #if PRINT_SYSCALLS
     /* Main ptrace loop */
