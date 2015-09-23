@@ -122,6 +122,7 @@ start_trace(pid_t child, char* procname)
 
     printf("program segment starts at: %lx\n", start_addr);
 
+#if PRINT_SYSCALLS
     /* Main ptrace loop */
     while(1) {
         /* Wait for a syscall, or break if the child has exited. */
@@ -129,23 +130,40 @@ start_trace(pid_t child, char* procname)
 
         /* Peek at the syscall value. */
         syscall = ptrace(PTRACE_PEEKUSER, child, sizeof(long)*SYSCALL_NUMBER_REGISTER);
-#if PRINT_SYSCALLS
         fprintf(stderr, "syscall(%d) = ", syscall);
-#else
-        ((void)syscall);
-#endif
 
         /* Wait again until the syscall is done. */
         if (wait_for_syscall(child) != 0) break;
 
         /* Get the syscall return value. */
         retval = ptrace(PTRACE_PEEKUSER, child, sizeof(long)*SYSCALL_RETVAL_REGISTER);
-#if PRINT_SYSCALLS
         fprintf(stderr, "%d\n", retval);
-#else
-        ((void)retval);
-#endif
     }
+
+    /* No need to detach here - we've exited */
+#else
+    /* We need to continue the process, since it will have stopped upon exit of
+     * a syscall (from above).  */
+    if (ptrace(PTRACE_CONT, child, NULL, NULL) == -1) {
+        fprintf(stderr, "could not continue process\n");
+        return 1;
+    }
+
+    /* Wait for the child. */
+    if (waitpid(child, &status, 0) == -1) {
+        fprintf(stderr, "could not wait for child: %d\n", status);
+        return 1;
+    }
+
+    /* Detach from the child. */
+    if (ptrace(PTRACE_DETACH, child, NULL, NULL) == -1 ) {
+        fprintf(stderr, "could not detach from process\n");
+        return 1;
+    }
+
+    printf("finished\n");
+#endif
+
     return 0;
 }
 
