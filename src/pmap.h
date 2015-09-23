@@ -29,5 +29,15 @@ typedef int (*pmap_callback)(struct pmap_information *info, void *context);
  */
 int pmap_walk(pid_t pid, pmap_callback cb, void *context);
 
+/**
+ * Open the process map and attempts to find the information for a given map
+ * name.  The information should be freed with `pmap_free`.
+ */
+struct pmap_information* pmap_find_info(pid_t pid, const char* name);
+
+/**
+ * Frees an allocated information.
+ */
+void pmap_free(struct pmap_information* info);
 
 #endif /* PMAP_H */

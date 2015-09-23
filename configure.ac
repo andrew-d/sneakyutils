@@ -2,7 +2,7 @@ AC_PREREQ([2.64])
 
 AC_INIT([sneakyutils],[0.0.1],[andrew@du.nham.ca])
 AC_CONFIG_AUX_DIR([build-aux])
-AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_HEADERS([src/config.h])
 AC_CONFIG_MACRO_DIRS([m4])
 
 echo
@@ -14,7 +14,7 @@ AC_CANONICAL_HOST
 
 echo
 echo "Initializing Automake:"
-AM_INIT_AUTOMAKE([1.9 foreign])
+AM_INIT_AUTOMAKE([1.9 no-define foreign subdir-objects])
 AC_PROG_CC
 
 echo
@@ -30,16 +30,16 @@ LT_INIT([])
 HOST_DEFINES=""
 
 case $host in
-  *-*-linux-*)  HOST_DEFINES="$HOST_DEFINES -DLINUX" ;;
-  *-*-darwin-*) HOST_DEFINES="$HOST_DEFINES -DDARWIN" ;;
-  *)            AC_MSG_ERROR([Unsupported platform]) ;;
+  *-*-linux*)  HOST_DEFINES="$HOST_DEFINES -DLINUX" ;;
+  *-*-darwin*) HOST_DEFINES="$HOST_DEFINES -DDARWIN" ;;
+  *)           AC_MSG_ERROR([Unsupported platform]) ;;
 esac
 
 case $host in
-  x86_64-*-*)   HOST_DEFINES="$HOST_DEFINES -DAMD64" ;;
-  i?86-*-*)     HOST_DEFINES="$HOST_DEFINES -DX86" ;;
-  arm*-*-*)     HOST_DEFINES="$HOST_DEFINES -DARM" ;;
-  *)            AC_MSG_ERROR([Unsupported architecture]) ;;
+  x86_64-*-*)  HOST_DEFINES="$HOST_DEFINES -DAMD64" ;;
+  i?86-*-*)    HOST_DEFINES="$HOST_DEFINES -DX86" ;;
+  arm*-*-*)    HOST_DEFINES="$HOST_DEFINES -DARM" ;;
+  *)           AC_MSG_ERROR([Unsupported architecture]) ;;
 esac
 
 AC_SUBST([HOST_DEFINES])
@@ -60,6 +60,11 @@ AC_CONFIG_FILES([
 AC_CONFIG_SUBDIRS([
     libelf-0.8.13
 ])
+
+# Link so the include directory works.
+ln -fs \
+    $(realpath $(dirname $0))/libelf-0.8.13/lib \
+    $(realpath $(dirname $0))/libelf-0.8.13/lib/libelf
 
 # Write output
 echo ""
