@@ -60,6 +60,7 @@ size_t argv_size(int argc, char** argv);
 /* These are the fake and real arguments, parsed from our command line */
 static char **fakeargv, **realargv;
 static int fakeargc, realargc;
+static int maxargc;
 
 /* The real path of the binary to run */
 static char rpath[PATH_MAX];
@@ -112,6 +113,9 @@ main(int argc, char **argv, char **envp)
         return 1;
     }
 
+    /* Calculate maximum number */
+    max_argc = max(fakeargc, realargc);
+
     for (i = 0; i < fakeargc; i++) {
         printf("fakeargv[%d] = %s\n", i, fakeargv[i]);
     }
@@ -148,10 +152,22 @@ main(int argc, char **argv, char **envp)
 static int
 start_child()
 {
-    char **args = calloc(realargc+1, sizeof(char*));
-    memcpy(args, realargv, realargc * sizeof(char*));
-    args[realargc] = NULL;
+    int i;
+    char **args = calloc(num_args+1, sizeof(char*));
 
+    /* Copy our fake args on top */
+    memcpy(args, fakeargv, fakeargc * sizeof(char*));
+
+    /* If we have more real args, those are '' */
+    for (i = fakeargc; i < realargc; i++) {
+        args[i] = "";
+    }
+
+    /* Null-terminate */
+    args[num_args] = NULL;
+
+    /* Note: we're running ourself here with the FAKE argv, and the ptrace bits
+     * will dump and write the 'real' argv to the process when fixing it up. */
     ptrace(PTRACE_TRACEME);
     kill(getpid(), SIGSTOP);
     return execvp(args[0], args);
@@ -197,13 +213,13 @@ start_trace(pid_t child)
     /* Calculate the current stack size, and the size that we're offsetting our
      * stack by. */
     stack_size = stackinfo->end - stack_pointer;
-    stack_diff = stack_size + argv_size(fakeargc, fakeargv);
+    stack_diff = stack_size + argv_size(realargc, realargv);
 
     /* Align the difference to 16 bytes */
     stack_diff = (stack_diff + (0x10 - 1)) & -0x10;
 
     printf("current stack size: 0x%lx bytes\n", stack_size);
-    printf("  replacement argv: 0x%lx bytes\n", argv_size(fakeargc, fakeargv));
+    printf("  replacement argv: 0x%lx bytes\n", argv_size(realargc, realargv));
     printf("  stack difference: 0x%lx bytes\n", stack_diff);
 
 #if DUMP_STACKS
@@ -222,17 +238,16 @@ start_trace(pid_t child)
         return 1;
     }
 
-
-    /* Serialize the fake argv into the gap between old and new.  We save the
+    /* Serialize the real argv into the gap between old and new.  We save the
      * pointers to the serialized locations as we go, so we can set them below. */
-    arg_locations = calloc(fakeargc, sizeof(uintptr_t));
+    arg_locations = calloc(realargc, sizeof(uintptr_t));
     p = new_stack_pointer + stack_size;
-    set_proc_memory(child, p, 0xAA, argv_size(fakeargc, fakeargv));  /* TODO: Debugging */
-    for (i = 0; i < fakeargc; i++) {
-        size_t slen = strlen(fakeargv[i]) + 1;   /* Inc. trailing null */
+    set_proc_memory(child, p, 0xAA, argv_size(realargc, realargv));  /* TODO: Debugging */
+    for (i = 0; i < realargc; i++) {
+        size_t slen = strlen(realargv[i]) + 1;   /* Inc. trailing null */
 
-        if (write_proc_memory(child, p, fakeargv[i], slen) != 0) {
-            fprintf(stderr, "write_proc_memory[fakeargv[%d]] failed: %d\n", i, errno);
+        if (write_proc_memory(child, p, realargv[i], slen) != 0) {
+            fprintf(stderr, "write_proc_memory[realargv[%d]] failed: %d\n", i, errno);
             return 1;
         }
 
@@ -259,39 +274,7 @@ start_trace(pid_t child)
         char* argv_value;
         int argv_len;
 
-        /* Get the current argv pointer */
-        if (read_proc_memory(child, stack_pointer + (WORD_SIZE * (i + 1)), (void*)&curr_argv, WORD_SIZE) != 0) {
-            fprintf(stderr, "read_proc_memory failed: %d\n", errno);
-            return 1;
-        }
-
-#if DUMP_ARGV
-        printf("argv[%d] = 0x%lx\n", i, curr_argv);
-#endif
-
-        /* First off, we bump the pointer on the 'new' segment of the stack
-         * down by the stack difference, so it points to the new copy of the
-         * string. */
-        new_argv = curr_argv - stack_diff;
-        if (write_proc_memory(child, new_stack_pointer + argv_offset, (void*)&new_argv, WORD_SIZE) != 0) {
-            fprintf(stderr, "write_proc_memory[write-ptr] failed: %d\n", errno);
-            return 1;
-        }
-
-        /* Read the value at the old argv location */
-        argv_value = read_process_string(child, curr_argv);
-        argv_len = strlen(argv_value);
-#if DUMP_ARGV
-        printf("  -> (%d) %s\n", argv_len, argv_value);
-#endif
-
-        /* Zero the existing memory */
-        memset(argv_value, '\0', argv_len);
-        if (write_proc_memory(child, curr_argv, argv_value, argv_len) != 0) {
-            fprintf(stderr, "write_proc_memory[zero-arg] failed: %d\n", errno);
-            return 1;
-        }
-
+        /* If 
         if (i < fakeargc) {
             uintptr_t new_ptr = arg_locations[i];
 
