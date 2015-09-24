@@ -18,5 +18,5 @@ show_argv_LDFLAGS =
 
 pthide_SOURCES = src/hexdump.c src/pthide.c src/pmap.c
 pthide_CFLAGS = -Wall -Wextra -pedantic
-pthide_CPPFLAGS = -Ilibelf-0.8.13/lib $(HOST_DEFINES)
-pthide_LDFLAGS = libelf-0.8.13/lib/libelf.a
+pthide_CPPFLAGS = $(HOST_DEFINES)
+pthide_LDFLAGS =

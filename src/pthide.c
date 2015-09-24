@@ -9,37 +9,31 @@
 #include <limits.h>
 #include <math.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include <gelf.h>
-
+#include "config.h"
 #include "hexdump.h"
 #include "pmap.h"
-#include "config.h"
 
 
 #define WORD_SIZE sizeof(uintptr_t)
 #define UNUSED(_x)  ((void)(_x))
 
 
-#if defined(AMD64) || defined(X86)
-    #define BREAKPOINT "\xCC"
-#elif defined(ARM)
-    /* TODO: is this accurate? */
-    #define BREAKPOINT "\xFE\xDE\xFF\xE7"
+#ifdef DEBUG
+#   define dprintf(...) do { fprintf(stdout, __VA_ARGS__); } while (0)
 #else
-    #error "Unknown architecture"
+#   define dprintf(...) do {} while (0)
 #endif
 
 
-/* TODO: these should be set in the configure script */
-#define PRINT_SYSCALLS 0
-#define DUMP_STACKS 1
-#define DUMP_ARGV 1
+/* TODO: this should be set in the configure script */
+#define DUMP_STACK 0
 
 
 static int start_child();
@@ -145,10 +139,10 @@ main(int argc, char **argv)
     maxargc = max(fakeargc, realargc);
 
     for (i = 0; i < fakeargc; i++) {
-        printf("fakeargv[%d] = %s\n", i, fakeargv[i]);
+        dprintf("fakeargv[%d] = %s\n", i, fakeargv[i]);
     }
     for (i = 0; i < realargc; i++) {
-        printf("realargv[%d] = %s\n", i, realargv[i]);
+        dprintf("realargv[%d] = %s\n", i, realargv[i]);
     }
 
     /* The input path must be accessible. */
@@ -157,11 +151,6 @@ main(int argc, char **argv)
     }
     if (realpath(realargv[0], rpath) == NULL) {
         die("could not get real path for: %s\n", realargv[0]);
-    }
-
-    /* ELF parsing. */
-    if (elf_version(EV_CURRENT) == EV_NONE) {
-        die("could not initialize libelf: %s\n", elf_errmsg(-1));
     }
 
     /* Run the process. */
@@ -232,7 +221,7 @@ start_trace(pid_t child)
         fprintf(stderr, "could not parse pmap\n");
         return 1;
     }
-    printf("stack segment is at: %lx - %lx\n", stackinfo->begin, stackinfo->end);
+    dprintf("stack segment is at: %lx - %lx\n", stackinfo->begin, stackinfo->end);
 
     if (get_process_stack_pointer(child, &stack_pointer) != 0) {
         return 1;
@@ -246,17 +235,9 @@ start_trace(pid_t child)
     /* Align the difference to 16 bytes */
     stack_diff = (stack_diff + (0x10 - 1)) & -0x10;
 
-    printf("current stack size: 0x%lx bytes\n", stack_size);
-    printf("  replacement argv: 0x%lx bytes\n", argv_size(realargc, realargv));
-    printf("  stack difference: 0x%lx bytes\n", stack_diff);
-
-#if DUMP_STACKS
-    /*
-    printf("original stack:\n------------------------------\n");
-    dump_proc_memory(child, stack_pointer, stack_size);
-    printf("\n");
-    */
-#endif
+    dprintf("current stack size: 0x%lx bytes\n", stack_size);
+    dprintf("  replacement argv: 0x%lx bytes\n", argv_size(realargc, realargv));
+    dprintf("  stack difference: 0x%lx bytes\n", stack_diff);
 
     /* The new stack pointer is 'below' the existing one by the size
      * difference.  Stacks grow down! */
@@ -283,18 +264,10 @@ start_trace(pid_t child)
             return 1;
         }
 
-        printf("arg_locations[%d] = 0x%lx\n", i, p);
+        dprintf("arg_locations[%d] = 0x%lx\n", i, p);
         arg_locations[i] = p;
         p += slen;
     }
-
-#if DUMP_STACKS
-    /*
-    printf("new stack:\n------------------------------\n");
-    dump_proc_memory(child, new_stack_pointer, stack_diff);
-    printf("\n");
-    */
-#endif
 
     /* Reset stack pointer to the new value */
     if (set_process_stack_pointer(child, new_stack_pointer) != 0) {
@@ -321,7 +294,7 @@ start_trace(pid_t child)
         if (i < realargc) {
             uintptr_t new_ptr = arg_locations[i];
 
-            printf("  changing to 0x%lx\n", new_ptr);
+            dprintf("  changing to 0x%lx\n", new_ptr);
 
             /* Change the original pointer if we have a fake argument */
             if (write_proc_memory(child, new_stack_pointer + argv_offset, (void*)&new_ptr, WORD_SIZE) != 0) {
@@ -329,7 +302,7 @@ start_trace(pid_t child)
                 return 1;
             }
         } else {
-            printf("  zeroing\n");
+            dprintf("  zeroing\n");
 
             if (write_proc_memory(child, new_stack_pointer + argv_offset, (void*)&zero, WORD_SIZE) != 0) {
                 fprintf(stderr, "write_proc_memory[ptr-zero] failed: %d\n", errno);
@@ -338,10 +311,12 @@ start_trace(pid_t child)
         }
     }
 
-#if DUMP_STACKS
-    printf("total stack dump:\n------------------------------\n");
+#if DUMP_STACK
+    dprintf("stack dump:\n------------------------------\n");
     dump_proc_memory(child, new_stack_pointer, stackinfo->end - new_stack_pointer);
-    printf("\n");
+    dprintf("\n");
+#else
+    ((void)dump_proc_memory);
 #endif
 
     /* We need to continue the process, since it will have stopped upon exit of
@@ -363,12 +338,15 @@ start_trace(pid_t child)
         return 1;
     }
 
-    printf("finished\n");
+    dprintf("finished\n");
     pmap_free(stackinfo);
     return 0;
 }
 
 
+/**
+ * Reads the argv of a given process, given the initial stack pointer.
+ */
 int
 read_process_argv(pid_t child, uintptr_t stack_pointer, int *out_argc, char ***out_argv)
 {
@@ -383,7 +361,7 @@ read_process_argv(pid_t child, uintptr_t stack_pointer, int *out_argc, char ***o
         goto err;
     }
 
-    printf("argc = %d\n", argc);
+    dprintf("argc = %d\n", argc);
 
     /* Allocate enough space for the argv array, plus the null terminator */
     argv = (char**)calloc(argc + 1, sizeof(char*));
@@ -403,7 +381,7 @@ read_process_argv(pid_t child, uintptr_t stack_pointer, int *out_argc, char ***o
             fprintf(stderr, "read_proc_memory[argv[%d]] failed: %d\n", i, errno);
             goto err;
         }
-        printf("argv[%d] = 0x%lx\n", i, argv_pointer);
+        dprintf("argv[%d] = 0x%lx\n", i, argv_pointer);
 
         /* Read the value of this pointer */
         if (read_proc_memory(child, stack_pointer + argv_offset, (void*)&argv_pointer, WORD_SIZE) != 0) {
@@ -413,7 +391,7 @@ read_process_argv(pid_t child, uintptr_t stack_pointer, int *out_argc, char ***o
 
         /* Read the string at this address */
         argv_value = read_process_string(child, argv_pointer);
-        printf("  -> %s\n", argv_value);
+        dprintf("  -> %s\n", argv_value);
 
         /* Save for return */
         argv[i] = argv_value;
@@ -482,6 +460,9 @@ wait_for_syscall(pid_t child)
 }
 
 
+/**
+ * Retrieves the process's architecture-dependent stack pointer.
+ */
 static int
 get_process_stack_pointer(pid_t child, uintptr_t *out) {
     struct user_regs_struct regs;
@@ -498,14 +479,17 @@ get_process_stack_pointer(pid_t child, uintptr_t *out) {
 #elif defined(ARM)
     *out = regs.sp;
 #else
-    #error "Unknown architecture"
+#   error "Unknown architecture"
 #endif
 
-    printf("program stack pointer is: %lx\n", *out);
+    dprintf("program stack pointer is: %lx\n", *out);
     return 0;
 }
 
 
+/**
+ * Sets the process's architecture-dependent stack pointer.
+ */
 static int
 set_process_stack_pointer(pid_t child, uintptr_t sp) {
     struct user_regs_struct regs;
@@ -522,7 +506,7 @@ set_process_stack_pointer(pid_t child, uintptr_t sp) {
 #elif defined(ARM)
     regs.sp = sp;
 #else
-    #error "Unknown architecture"
+#   error "Unknown architecture"
 #endif
 
     if (ptrace(PTRACE_SETREGS, child, NULL, &regs) == -1) {
@@ -530,11 +514,14 @@ set_process_stack_pointer(pid_t child, uintptr_t sp) {
         return 1;
     }
 
-    printf("new stack pointer: %lx\n", sp);
+    dprintf("new stack pointer: %lx\n", sp);
     return 0;
 }
 
 
+/**
+ * Reads some number of bytes from the given process into ptr.
+ */
 static int
 read_proc_memory(pid_t child, uintptr_t addr, void *ptr, size_t len)
 {
@@ -583,6 +570,9 @@ read_proc_memory(pid_t child, uintptr_t addr, void *ptr, size_t len)
 }
 
 
+/**
+ * Writes the data from ptr into the given process at the specified address.
+ */
 static int
 write_proc_memory(pid_t child, uintptr_t addr, void *ptr, size_t len)
 {
@@ -619,6 +609,9 @@ write_proc_memory(pid_t child, uintptr_t addr, void *ptr, size_t len)
 }
 
 
+/**
+ * memset() for a remote process's memory
+ */
 static int
 set_proc_memory(pid_t child, uintptr_t addr, unsigned char ch, size_t len)
 {
@@ -633,7 +626,9 @@ set_proc_memory(pid_t child, uintptr_t addr, unsigned char ch, size_t len)
 }
 
 
-
+/**
+ * memcpy() for a remote process's memory
+ */
 static int
 copy_proc_memory(pid_t child, uintptr_t source, uintptr_t dest, size_t len)
 {
@@ -656,6 +651,9 @@ err:
 }
 
 
+/**
+ * hexdump() a remote process's memory
+ */
 static void
 dump_proc_memory(pid_t child, uintptr_t addr, size_t len)
 {
@@ -668,6 +666,10 @@ dump_proc_memory(pid_t child, uintptr_t addr, size_t len)
 }
 
 
+/**
+ * Reads a string from a remote process.  The return value should be freed with
+ * free().
+ */
 static char*
 read_process_string(pid_t child, uintptr_t addr)
 {
@@ -701,71 +703,3 @@ read_process_string(pid_t child, uintptr_t addr)
 
     return val;
 }
-
-
-/*
-
- **
- * Retrieves the entrypoint of the given ELF file.
- *
-static int
-get_entrypoint(const char* filepath, uintptr_t* entrypoint)
-{
-    int i;
-    int ret = 0;
-    int fd = -1;
-    Elf* e = NULL;
-    GElf_Ehdr ehdr;
-
-    assert(entrypoint != NULL);
-
-    if ((fd = open(filepath, O_RDONLY, 0)) < 0) {
-        fprintf(stderr, "could not open: %s\n", filepath);
-        goto err;
-    }
-
-    if ((e = elf_begin(fd, ELF_C_READ, NULL)) == NULL) {
-        fprintf(stderr, "elf_begin() failed: %s\n", elf_errmsg(-1));
-        goto err;
-    }
-
-    if (elf_kind(e) != ELF_K_ELF) {
-        fprintf(stderr, "input is not an ELF object: %s\n", filepath);
-        goto err;
-    }
-
-    if (gelf_getehdr(e, &ehdr) == NULL) {
-        fprintf(stderr, "getehdr() failed: %s\n", elf_errmsg(-1));
-        goto err;
-    }
-
-    if ((i = gelf_getclass(e)) == ELFCLASSNONE) {
-        fprintf(stderr, "getehdr() failed: %s\n", elf_errmsg(-1));
-        goto err;
-    }
-
-#if 0
-    printf("%s is a %d-bit ELF object\n", filepath,
-        i == ELFCLASS32 ? 32 : 64);
-    printf("  e_entry = %lx\n", ehdr.e_entry);
-#endif
-
-    *entrypoint = ehdr.e_entry;
-    goto cleanup;
-
-err:
-    ret = 1;
-
-cleanup:
-    if (e != NULL) {
-        elf_end(e);
-    }
-
-    if (fd >= 0) {
-        close(fd);
-    }
-
-    return ret;
-}
-
-*/
