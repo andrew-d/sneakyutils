@@ -2,7 +2,7 @@
 
 
 void
-hexdump(FILE * stream, void const * data, size_t len)
+hexdump(FILE * stream, void const * data, size_t len, uintptr_t start_addr)
 {
     size_t i;
     size_t r,c;
@@ -14,7 +14,7 @@ hexdump(FILE * stream, void const * data, size_t len)
 
     for (r=0,i=0; r<(len/16+(len%16!=0)); r++,i+=16)
     {
-        fprintf(stream,"%04X:   ",i); /* location of first byte in line */
+        fprintf(stream,"%lx:   ",i+start_addr); /* location of first byte in line */
 
         for (c=i; c<i+8; c++) /* left half of hex dump */
         if (c<len)

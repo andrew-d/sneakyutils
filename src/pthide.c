@@ -4,15 +4,16 @@
 #include <sys/types.h>
 #include <sys/user.h>
 #include <assert.h>
-#include <fcntl.h>
-#include <stdint.h>
-#include <stdarg.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <limits.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <math.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <gelf.h>
 
@@ -39,8 +40,6 @@
 #define PRINT_SYSCALLS 0
 #define DUMP_STACKS 1
 #define DUMP_ARGV 1
-#define SYSCALL_NUMBER_REGISTER   ORIG_RAX
-#define SYSCALL_RETVAL_REGISTER   RAX
 
 
 static int start_child();
@@ -77,11 +76,37 @@ die(const char* fmt, ...)
 }
 
 
+inline int
+max(int a, int b)
+{
+    return a > b ? a : b;
+}
+
+
+/* strdup a string, aligning to 16-byte allocations */
+inline char*
+strdup_aligned(char* s)
+{
+    char* dd;
+    size_t slen;
+
+    slen = strlen(s);
+    slen = (slen + (0x10 - 1)) & -0x10;
+
+    dd = calloc(slen, 1);
+    if (!dd) return NULL;
+
+    strcpy(dd, s);
+    return dd;
+}
+
+
+
 int
-main(int argc, char **argv, char **envp)
+main(int argc, char **argv)
 {
     pid_t child;
-    int i;
+    int i, j;
 
     if (argc < 4) {
         fprintf(stderr, "Usage: %s fakeprog fakeargs -- realprog realargs\n", argv[0]);
@@ -104,17 +129,20 @@ main(int argc, char **argv, char **envp)
     }
 
     /* Real argument are until the end */
-    realargv = argv + (i + 1);
     realargc = argc - (i + 1);
+    realargv = calloc(realargc + 1, sizeof(char*));
+    for (j = 0; j < realargc; j++) {
+        realargv[j] = strdup_aligned(argv[i + 1 + j]);
+    }
 
     if (fakeargc > realargc) {
-        fprintf(stderr, "fake command line cannot have more arguments than real command line (f: %d, r: %d)\n",
+        fprintf(stderr, "currently, you cannot have more fake arguments than real arguments (%d > %d)\n",
             fakeargc, realargc);
         return 1;
     }
 
-    /* Calculate maximum number */
-    max_argc = max(fakeargc, realargc);
+    /* Calculate maximum number of arguments */
+    maxargc = max(fakeargc, realargc);
 
     for (i = 0; i < fakeargc; i++) {
         printf("fakeargv[%d] = %s\n", i, fakeargv[i]);
@@ -125,10 +153,10 @@ main(int argc, char **argv, char **envp)
 
     /* The input path must be accessible. */
     if (access(realargv[0], F_OK) == -1) {
-        die("could not access: %s (should be absolute path)\n", argv[1]);
+        die("could not access: %s (should be absolute path)\n", realargv[0]);
     }
     if (realpath(realargv[0], rpath) == NULL) {
-        die("could not get real path for: %s\n", argv[1]);
+        die("could not get real path for: %s\n", realargv[0]);
     }
 
     /* ELF parsing. */
@@ -153,7 +181,7 @@ static int
 start_child()
 {
     int i;
-    char **args = calloc(num_args+1, sizeof(char*));
+    char **args = calloc(maxargc+1, sizeof(char*));
 
     /* Copy our fake args on top */
     memcpy(args, fakeargv, fakeargc * sizeof(char*));
@@ -164,13 +192,13 @@ start_child()
     }
 
     /* Null-terminate */
-    args[num_args] = NULL;
+    args[maxargc] = NULL;
 
     /* Note: we're running ourself here with the FAKE argv, and the ptrace bits
      * will dump and write the 'real' argv to the process when fixing it up. */
     ptrace(PTRACE_TRACEME);
     kill(getpid(), SIGSTOP);
-    return execvp(args[0], args);
+    return execvp(realargv[0], args);
 }
 
 
@@ -181,7 +209,7 @@ static int
 start_trace(pid_t child)
 {
     struct pmap_information *stackinfo;
-    uintptr_t p, stack_pointer, new_stack_pointer;
+    uintptr_t p, stack_pointer, new_stack_pointer, new_argc;
     ptrdiff_t stack_size, stack_diff;
     int i;
     uintptr_t zero = 0;
@@ -223,14 +251,19 @@ start_trace(pid_t child)
     printf("  stack difference: 0x%lx bytes\n", stack_diff);
 
 #if DUMP_STACKS
+    /*
     printf("original stack:\n------------------------------\n");
     dump_proc_memory(child, stack_pointer, stack_size);
     printf("\n");
+    */
 #endif
 
     /* The new stack pointer is 'below' the existing one by the size
      * difference.  Stacks grow down! */
     new_stack_pointer = stack_pointer - stack_diff;
+
+    /* Fill the stack with 0xAA for debugging */
+    set_proc_memory(child, new_stack_pointer, 0xAA, stack_pointer - new_stack_pointer);
 
     /* Copy the old to the new */
     if (copy_proc_memory(child, stack_pointer, new_stack_pointer, stack_size) != 0) {
@@ -242,7 +275,6 @@ start_trace(pid_t child)
      * pointers to the serialized locations as we go, so we can set them below. */
     arg_locations = calloc(realargc, sizeof(uintptr_t));
     p = new_stack_pointer + stack_size;
-    set_proc_memory(child, p, 0xAA, argv_size(realargc, realargv));  /* TODO: Debugging */
     for (i = 0; i < realargc; i++) {
         size_t slen = strlen(realargv[i]) + 1;   /* Inc. trailing null */
 
@@ -257,9 +289,11 @@ start_trace(pid_t child)
     }
 
 #if DUMP_STACKS
+    /*
     printf("new stack:\n------------------------------\n");
     dump_proc_memory(child, new_stack_pointer, stack_diff);
     printf("\n");
+    */
 #endif
 
     /* Reset stack pointer to the new value */
@@ -267,29 +301,37 @@ start_trace(pid_t child)
         return 1;
     }
 
-    /* Fix up all argv pointers. */
-    for (i = 0; i < realargc; i++) {
-        uintptr_t curr_argv, new_argv;
-        ptrdiff_t argv_offset = WORD_SIZE * (i + 1);
-        char* argv_value;
-        int argv_len;
+    /* Set the 'real' argc value */
+    new_argc = realargc;
+    if (write_proc_memory(child, new_stack_pointer, (void*)&new_argc, WORD_SIZE) != 0) {
+        fprintf(stderr, "write_proc_memory[realargc] failed: %d\n", errno);
+        return 1;
+    }
 
-        /* If 
-        if (i < fakeargc) {
+    /* Fix up all argv pointers.  This requires us to update pointers in the
+     * new argv array.  The general logic is:
+     *   - If the current argument is within the real argument count, fix the
+     *     new pointer to point to the right location.
+     *   - If the current argument is after the real argument count, NULL the
+     *     appropriate new pointer.
+     * */
+    for (i = 0; i < maxargc; i++) {
+        ptrdiff_t argv_offset = WORD_SIZE * (i + 1);
+
+        if (i < realargc) {
             uintptr_t new_ptr = arg_locations[i];
 
             printf("  changing to 0x%lx\n", new_ptr);
 
             /* Change the original pointer if we have a fake argument */
-            if (write_proc_memory(child, stack_pointer + argv_offset, (void*)&new_ptr, WORD_SIZE) != 0) {
+            if (write_proc_memory(child, new_stack_pointer + argv_offset, (void*)&new_ptr, WORD_SIZE) != 0) {
                 fprintf(stderr, "write_proc_memory[ptr-change] failed: %d\n", errno);
                 return 1;
             }
         } else {
             printf("  zeroing\n");
 
-            /* Otherwise, zero out the pointer */
-            if (write_proc_memory(child, stack_pointer + argv_offset, (void*)&zero, WORD_SIZE) != 0) {
+            if (write_proc_memory(child, new_stack_pointer + argv_offset, (void*)&zero, WORD_SIZE) != 0) {
                 fprintf(stderr, "write_proc_memory[ptr-zero] failed: %d\n", errno);
                 return 1;
             }
@@ -297,8 +339,8 @@ start_trace(pid_t child)
     }
 
 #if DUMP_STACKS
-    printf("edited original stack:\n------------------------------\n");
-    dump_proc_memory(child, stack_pointer, stack_size);
+    printf("total stack dump:\n------------------------------\n");
+    dump_proc_memory(child, new_stack_pointer, stackinfo->end - new_stack_pointer);
     printf("\n");
 #endif
 
@@ -505,6 +547,7 @@ read_proc_memory(pid_t child, uintptr_t addr, void *ptr, size_t len)
 
     memset(ptr, 0, len);
 
+    data.word = 0;
     word_count = 0;
     num_words = len / WORD_SIZE;
     output = (unsigned char*)ptr;
@@ -550,6 +593,7 @@ write_proc_memory(pid_t child, uintptr_t addr, void *ptr, size_t len)
         char      bytes[WORD_SIZE];
     } data;
 
+    data.word = 0;
     word_count = 0;
     num_words = len / WORD_SIZE;
     input = (unsigned char*)ptr;
@@ -619,7 +663,7 @@ dump_proc_memory(pid_t child, uintptr_t addr, size_t len)
     if (!buf) return;
     if (read_proc_memory(child, addr, buf, len) != 0) return;
 
-    hexdump(stdout, buf, len);
+    hexdump(stdout, buf, len, addr);
     free(buf);
 }
 
@@ -628,8 +672,8 @@ static char*
 read_process_string(pid_t child, uintptr_t addr)
 {
     char *val = malloc(4096);
-    int allocated = 4096;
-    int read = 0;
+    size_t allocated = 4096;
+    size_t read = 0;
     union u {
         uintptr_t word;
         char      bytes[WORD_SIZE];
