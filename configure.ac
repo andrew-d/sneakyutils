@@ -56,16 +56,6 @@ AC_CONFIG_FILES([
     Makefile
 ])
 
-# Subprojects
-AC_CONFIG_SUBDIRS([
-    libelf-0.8.13
-])
-
-# Link so the include directory works.
-ln -fs \
-    $(realpath $(dirname $0))/libelf-0.8.13/lib \
-    $(realpath $(dirname $0))/libelf-0.8.13/lib/libelf
-
 # Write output
 echo ""
 echo "Writing output:"

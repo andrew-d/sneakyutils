@@ -1,11 +1,5 @@
 ACLOCAL_AMFLAGS = -I m4
 
-SUBDIRS = libelf-0.8.13
-
-#lib_LTLIBRARIES = libhideargv.la
-#libhideargv_la_SOURCES = src/hideargv.c
-#libhideargv_la_LDFLAGS = -version-info 0:0:0
-
 bin_PROGRAMS = aspawn show_argv pthide
 
 aspawn_SOURCES = src/aspawn.c
