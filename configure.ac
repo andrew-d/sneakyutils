@@ -19,7 +19,7 @@ AC_PROG_CC
 
 echo
 echo "Initializing Libtool:"
-LT_PREREQ([2.4.6])
+LT_PREREQ([2.4.2])
 LT_INIT([])
 
 
